@@ -247,7 +247,7 @@
 
       head('LAN SCAN for Stremio server  [press YELLOW]');
       if (!scan.total) {
-        line('not run - press YELLOW to scan 192.168.100.1-254 for port 11470', 'dim');
+        line('not run - press YELLOW to scan this subnet for port 11470', 'dim');
       } else {
         line('subnet  : ' + (scan.subnet || '?'), 'dim');
         line('progress: ' + scan.done + '/' + scan.total + (scan.running ? ' (scanning...)' : ' (done)'), 'wa');
@@ -514,7 +514,10 @@
         /* Only auto-correct the stock default or a mistyped address.
            A URL the user deliberately set is left alone unless forced. */
         var stock = srv.current === 'http://127.0.0.1:11470/' || srv.current === 'http://127.0.0.1:11470';
-        var mistyped = srv.current.indexOf('192.168.100.15') !== -1 && srv.current.indexOf(':11470') === -1;
+        /* Same host as the configured server but no port: almost certainly a
+           ':' typed as '/' on the TV keyboard, which points at port 80. */
+        var host = (SERVER_URL.match(/^https?:\/\/([^:\/]+)/) || [])[1] || '';
+        var mistyped = !!host && srv.current.indexOf(host) !== -1 && !/:\d+/.test(srv.current);
         if (!force && !stock && !mistyped) { srv.note = 'left as-is (user set)'; return; }
         if (srv.current === SERVER_URL) { srv.note = 'already correct'; srv.applied = true; return; }
 

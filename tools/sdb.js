@@ -11,7 +11,12 @@
 'use strict';
 const net = require('net');
 
-const HOST = process.argv[2] || '192.168.100.5';
+const HOST = process.argv[2];
+if (!HOST) {
+  console.error('Usage: node ' + require('path').basename(process.argv[1]) + ' <tv-ip> [args]');
+  console.error('Enable Developer Mode on the TV first; port 26101 must be open.');
+  process.exit(1);
+}
 const PORT = 26101;
 const CMD = process.argv[3] || 'uname -a';
 

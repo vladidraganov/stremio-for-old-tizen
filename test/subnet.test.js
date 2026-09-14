@@ -16,17 +16,17 @@ function chooseBase(detected, serverUrl) {
   return detected || prefixFromServerUrl(serverUrl) || '192.168.1.';
 }
 
-assert.strictEqual(prefixFromIp('192.168.100.5'), '192.168.100.');
+assert.strictEqual(prefixFromIp('192.168.7.42'), '192.168.7.');
 assert.strictEqual(prefixFromIp('10.0.0.42'), '10.0.0.');
 assert.strictEqual(prefixFromIp('not-an-ip'), null);
 
-assert.strictEqual(prefixFromServerUrl('http://192.168.100.15:11470/'), '192.168.100.');
+assert.strictEqual(prefixFromServerUrl('http://192.168.7.10:11470/'), '192.168.7.');
 assert.strictEqual(prefixFromServerUrl('http://10.1.2.3:11470/'), '10.1.2.');
 assert.strictEqual(prefixFromServerUrl('http://my-nas.local:11470/'), null);
 assert.strictEqual(prefixFromServerUrl(''), null);
 
-assert.strictEqual(chooseBase('172.16.4.', 'http://192.168.100.15:11470/'), '172.16.4.');
-assert.strictEqual(chooseBase(null, 'http://192.168.100.15:11470/'), '192.168.100.');
+assert.strictEqual(chooseBase('172.16.4.', 'http://192.168.7.10:11470/'), '172.16.4.');
+assert.strictEqual(chooseBase(null, 'http://192.168.7.10:11470/'), '192.168.7.');
 assert.strictEqual(chooseBase(null, ''), '192.168.1.');
 
 console.log('subnet detection: all cases pass');

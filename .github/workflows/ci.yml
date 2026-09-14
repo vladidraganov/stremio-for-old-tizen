@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Patch and verify
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+
+      # The upstream package is not redistributed here - fetch it at build time.
+      - name: Fetch upstream Stremio Theater package
+        run: |
+          curl -sSfL -o upstream.wgt \
+            "https://github.com/Apps2Samsung/tizen-community-packages/releases/latest/download/Stremio-Tizen4.wgt"
+          ls -l upstream.wgt
+
+      # This is the real test: every patch anchor must still match the CURRENT
+      # upstream release. If upstream restructures, this fails loudly here
+      # rather than on someone's TV.
+      - name: Build
+        run: node --max-old-space-size=8192 build.js upstream.wgt Stremio-Tizen3-ci.wgt --build=0
+
+      - name: Verify package
+        run: node --max-old-space-size=8192 verify.js Stremio-Tizen3-ci.wgt
+
+      - name: Unit tests
+        run: |
+          node test/subnet.test.js
+          node --max-old-space-size=8192 test/destructure.test.js Stremio-Tizen3-ci.wgt
+          node --max-old-space-size=8192 test/mergeprops.test.js Stremio-Tizen3-ci.wgt
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Stremio-Tizen3-ci
+          path: Stremio-Tizen3-ci.wgt
+          retention-days: 14

@@ -172,6 +172,14 @@ instead silently points at port 80.
 Prefer well-seeded **x264**; HEVC 10-bit is less reliable. Press GREEN and cycle
 to the HEVC entries to test your set.
 
+## Contributing
+
+Reports from other TV models are genuinely useful — this is verified on one set,
+and other Tizen 3.0 / 2.x TVs may differ. Press **BLUE** and attach a photo of
+the overlay; it usually contains enough to diagnose remotely.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Credits
 
 - [Stremio](https://www.stremio.com/) — the app, the core, and the streaming server

@@ -1,0 +1,76 @@
+name: Bug report
+description: Something does not work on your TV
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **The single most useful thing you can attach is a photo of the diagnostic overlay.**
+        Press **BLUE** on the remote while the app is running. It shows your engine
+        version, errors with stack traces, network requests and the player state —
+        usually enough to diagnose without owning your TV.
+
+  - type: input
+    id: model
+    attributes:
+      label: TV model
+      placeholder: e.g. UE43MU6172
+    validations:
+      required: true
+
+  - type: input
+    id: tizen
+    attributes:
+      label: Tizen version
+      description: Shown in the overlay header area, or in the TV's Support → About menu
+      placeholder: e.g. 3.0
+    validations:
+      required: true
+
+  - type: input
+    id: build
+    attributes:
+      label: Build stamp
+      description: The `vN HH:MM` in the overlay title, or the release you downloaded
+      placeholder: e.g. v1 21:10
+    validations:
+      required: true
+
+  - type: dropdown
+    id: streams
+    attributes:
+      label: How do you get streams?
+      options:
+        - Stremio server on my network (LG TV / NAS / Pi / PC)
+        - Direct links via debrid (Real-Debrid, AllDebrid, Premiumize)
+        - Neither / not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: overlay
+    attributes:
+      label: Diagnostic overlay
+      description: |
+        Attach a photo (drag it in). If you can read them off, the ERRORS and
+        CONSOLE LOG sections matter most.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I installed a build from this project, not the upstream Stremio-Tizen4.wgt
+          required: true
+        - label: I changed the filename or build number if I built it myself (otherwise Tizen skips the install)
+          required: false

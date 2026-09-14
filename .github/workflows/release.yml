@@ -1,0 +1,70 @@
+name: Release
+
+# Tag a release to publish a ready-to-install .wgt:
+#   git tag v1.0.0 && git push origin v1.0.0
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: 'Build number (becomes widget version 1.5.N)'
+        required: true
+        default: '1'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Fetch upstream Stremio Theater package
+        run: |
+          curl -sSfL -o upstream.wgt \
+            "https://github.com/Apps2Samsung/tizen-community-packages/releases/latest/download/Stremio-Tizen4.wgt"
+
+      - name: Determine build number
+        id: n
+        run: |
+          if [ -n "${{ github.event.inputs.build_number }}" ]; then
+            echo "value=${{ github.event.inputs.build_number }}" >> "$GITHUB_OUTPUT"
+          else
+            # v1.2.3 -> 123, so each tag yields a distinct widget version
+            echo "value=$(echo '${{ github.ref_name }}' | tr -dc '0-9')" >> "$GITHUB_OUTPUT"
+          fi
+
+      # No --server: public builds must not carry anyone's LAN address.
+      - name: Build
+        run: |
+          node --max-old-space-size=8192 build.js upstream.wgt \
+            "Stremio-Tizen3-${{ github.ref_name || 'manual' }}.wgt" \
+            --build=${{ steps.n.outputs.value }}
+
+      - name: Verify
+        run: node --max-old-space-size=8192 verify.js "Stremio-Tizen3-${{ github.ref_name || 'manual' }}.wgt"
+
+      - name: Tests
+        run: |
+          node test/subnet.test.js
+          node --max-old-space-size=8192 test/destructure.test.js "Stremio-Tizen3-${{ github.ref_name || 'manual' }}.wgt"
+          node --max-old-space-size=8192 test/mergeprops.test.js "Stremio-Tizen3-${{ github.ref_name || 'manual' }}.wgt"
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Stremio-Tizen3-${{ github.ref_name }}.wgt
+          generate_release_notes: false
+          body_path: .github/RELEASE_TEMPLATE.md
