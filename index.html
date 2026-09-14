@@ -1,0 +1,567 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Stremio</title>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <style>
+    html,body{margin:0;padding:0;background:#14131f;}
+    #diag{display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483647;
+          background:#14131f;color:#e6e6f0;font-family:monospace;font-size:17px;
+          padding:12px 20px;overflow:auto;}
+    #diag h2{color:#ff5b5b;font-size:21px;margin:0 0 6px 0;}
+    #diag .hd{color:#8c6bff;font-weight:bold;margin-top:9px;
+              border-top:1px solid #33314d;padding-top:3px;}
+    #diag .ok{color:#4ad07a;}
+    #diag .no{color:#ff5b5b;font-weight:bold;}
+    #diag .wa{color:#ffc14d;}
+    #diag .dim{color:#a9a9c4;}
+    #diag pre{white-space:pre-wrap;word-wrap:break-word;margin:2px 0;font-size:16px;}
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <div id="diag"></div>
+
+  <!-- ES5-ONLY instrumentation. MUST run before bundle.js. -->
+  <script>
+  (function () {
+    var BUILD = '__BUILD_ID__';
+    var T0 = new Date().getTime();
+    function ms() { return new Date().getTime() - T0; }
+
+    var net = [];      /* every network request */
+    var logs = [];     /* console output */
+    var errors = [];   /* errors + rejections */
+    var shown = false;
+    var scan = { running: false, done: 0, total: 0, found: [], subnet: '' };
+
+    function note(a) { if (logs.length < 120) logs.push('[' + ms() + 'ms] ' + a); }
+
+    /* ---- capture console ---- */
+    var C = window.console || {};
+    function wrap(kind) {
+      var orig = C[kind];
+      C[kind] = function () {
+        var parts = [];
+        for (var i = 0; i < arguments.length; i++) {
+          var a = arguments[i];
+          try {
+            parts.push(a && a.message ? (a.name + ': ' + a.message)
+                     : (typeof a === 'object' ? JSON.stringify(a).slice(0, 300) : String(a)));
+          } catch (e) { parts.push('[unprintable]'); }
+        }
+        var line = kind.toUpperCase() + ': ' + parts.join(' ');
+        if (kind === 'error' || kind === 'warn') { errors.push('[' + ms() + 'ms] ' + line); }
+        else { note(line); }
+        if (orig) { try { orig.apply(C, arguments); } catch (e) {} }
+      };
+    }
+    wrap('log'); wrap('warn'); wrap('error'); wrap('info');
+
+    /* ---- capture errors + promise rejections ---- */
+    function describe(r) {
+      if (!r) return String(r);
+      var out = (r.name ? r.name + ': ' : '') + (r.message || String(r));
+      if (r.stack) {
+        var st = String(r.stack).split('\n').slice(0, 14).join('\n');
+        out += '\n' + st;
+      }
+      return out;
+    }
+
+    window.onerror = function (msg, file, line, col, err) {
+      errors.push('[' + ms() + 'ms] ERROR: ' + msg + '\n    at ' + file + ':' + line + ':' + col +
+                  (err && err.stack ? '\n' + String(err.stack).split('\n').slice(0, 14).join('\n') : ''));
+      return false;
+    };
+    window.onunhandledrejection = function (e) {
+      errors.push('[' + ms() + 'ms] UNHANDLED REJECTION: ' + describe(e && e.reason));
+    };
+    try {
+      window.addEventListener('unhandledrejection', function (e) {
+        errors.push('[' + ms() + 'ms] REJECTION: ' + describe(e && e.reason));
+      });
+    } catch (e) {}
+
+    /* ---- instrument Worker (worker SyntaxErrors never reach window.onerror) ---- */
+    var workers = [];
+    if (typeof window.Worker === 'function') {
+      var OrigWorker = window.Worker;
+      var PatchedWorker = function (url, opts) {
+        var w = new OrigWorker(url, opts);
+        var rec = { t0: ms(), url: String(url).slice(0, 80), state: 'created', msgs: 0 };
+        workers.push(rec);
+        try {
+          w.addEventListener('error', function (ev) {
+            rec.state = 'ERROR';
+            errors.push('[' + ms() + 'ms] WORKER ERROR: ' +
+                        (ev.message || '(no message - likely SyntaxError in worker script)') +
+                        (ev.filename ? ('\n    at ' + ev.filename + ':' + ev.lineno) : ''));
+          });
+          w.addEventListener('message', function () { rec.msgs++; rec.state = 'replying'; });
+        } catch (e) {}
+        return w;
+      };
+      PatchedWorker.prototype = OrigWorker.prototype;
+      window.Worker = PatchedWorker;
+      try { self.Worker = PatchedWorker; } catch (e) {}
+    }
+
+    /* ---- instrument Tizen AVPlay (the native player path) ---- */
+    var avplay = { url: '', opens: 0, prepares: 0, state: 'not used', lastError: '' };
+    try {
+      if (window.webapis && webapis.avplay) {
+        var AV = webapis.avplay;
+
+        var origOpen = AV.open;
+        AV.open = function (url) {
+          avplay.opens++;
+          avplay.url = String(url);
+          avplay.state = 'opened';
+          note('AVPlay.open(' + avplay.url + ')');
+          return origOpen.apply(AV, arguments);
+        };
+
+        var origPrepare = AV.prepareAsync;
+        AV.prepareAsync = function (ok, fail) {
+          avplay.prepares++;
+          avplay.state = 'preparing (attempt ' + avplay.prepares + ')';
+          note('AVPlay.prepareAsync #' + avplay.prepares);
+          var t = ms();
+          return origPrepare.call(AV, function () {
+            avplay.state = 'PREPARED ok in ' + (ms() - t) + 'ms';
+            note('AVPlay PREPARE SUCCESS (' + (ms() - t) + 'ms)');
+            if (ok) { ok(); }
+          }, function (e) {
+            var msg = (e && (e.message || e.name)) ? (e.name + ': ' + e.message) : String(e);
+            avplay.state = 'PREPARE FAILED after ' + (ms() - t) + 'ms';
+            avplay.lastError = msg;
+            errors.push('[' + ms() + 'ms] AVPLAY PREPARE ERROR (' + (ms() - t) + 'ms): ' + msg +
+                        '\n    url: ' + avplay.url);
+            if (fail) { fail(e); }
+          });
+        };
+      }
+    } catch (e) {}
+
+    /* ---- instrument fetch ---- */
+    function record(method, url) {
+      var rec = { m: method, u: String(url).slice(0, 150), t0: ms(), done: false, status: '', err: '' };
+      /* the LAN scan fires 254 requests - keep them out of the visible log */
+      if (!(scan && scan.running) && net.length < 80) { net.push(rec); }
+      return rec;
+    }
+    if (typeof window.fetch === 'function') {
+      var origFetch = window.fetch;
+      window.fetch = function (input, init) {
+        var url = (input && input.url) ? input.url : input;
+        var rec = record((init && init.method) || 'GET', url);
+        var p;
+        try { p = origFetch.apply(window, arguments); }
+        catch (e) { rec.done = true; rec.err = 'THREW ' + e.message; rec.t1 = ms(); throw e; }
+        return p.then(function (r) {
+          rec.done = true; rec.t1 = ms(); rec.status = r.status; return r;
+        }, function (e) {
+          rec.done = true; rec.t1 = ms(); rec.err = (e && e.message) ? e.message : String(e);
+          throw e;
+        });
+      };
+    }
+
+    /* ---- instrument XHR ---- */
+    if (window.XMLHttpRequest) {
+      var OrigOpen = XMLHttpRequest.prototype.open;
+      var OrigSend = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.open = function (m, u) {
+        this.__rec = record(m + '(xhr)', u);
+        return OrigOpen.apply(this, arguments);
+      };
+      XMLHttpRequest.prototype.send = function () {
+        var self = this, rec = this.__rec;
+        if (rec) {
+          this.addEventListener('load', function () { rec.done = true; rec.t1 = ms(); rec.status = self.status; });
+          this.addEventListener('error', function () { rec.done = true; rec.t1 = ms(); rec.err = 'network error'; });
+          this.addEventListener('timeout', function () { rec.done = true; rec.t1 = ms(); rec.err = 'timeout'; });
+          this.addEventListener('abort', function () { rec.done = true; rec.t1 = ms(); rec.err = 'aborted'; });
+        }
+        return OrigSend.apply(this, arguments);
+      };
+    }
+
+    /* ---- live TLS / connectivity self-tests ---- */
+    var probes = [];
+    /* okCodes: HTTP statuses that mean "this worked". A POST to /api/login with
+       an empty body legitimately answers 400 - that is a SUCCESS here, because
+       it proves the POST method survived. A 405 would mean the method was
+       dropped (the Reflect.set failure we fixed). */
+    function probe(label, url, method, body, okCodes, note) {
+      var p = { label: label, url: url, state: 'running', t0: ms(),
+                ok: false, okCodes: okCodes || [200], note: note || '' };
+      probes.push(p);
+      try {
+        var x = new XMLHttpRequest();
+        x.open(method || 'GET', url, true);
+        if (body) { try { x.setRequestHeader('Content-Type', 'application/json'); } catch (e) {} }
+        x.timeout = 15000;
+        x.onload = function () {
+          p.state = 'HTTP ' + x.status;
+          p.t1 = ms();
+          for (var i = 0; i < p.okCodes.length; i++) { if (x.status === p.okCodes[i]) { p.ok = true; } }
+          if (x.status === 405) { p.state += ' - METHOD DROPPED'; }
+        };
+        x.onerror = function () { p.state = 'FAILED (TLS/network)'; p.t1 = ms(); };
+        x.ontimeout = function () { p.state = 'TIMEOUT'; p.t1 = ms(); };
+        x.send(body || null);
+      } catch (e) { p.state = 'THREW ' + e.message; }
+    }
+
+    var D;
+    function line(html, cls) {
+      var d = document.createElement('div');
+      if (cls) d.className = cls;
+      d.innerHTML = html;
+      D.appendChild(d);
+    }
+    function head(t) { line(t, 'hd'); }
+
+    function render(reason) {
+      var box = document.getElementById('diag');
+      box.innerHTML = '';
+      D = box;
+
+      var h = document.createElement('h2');
+      h.innerHTML = 'STREMIO DIAGNOSTIC ' + BUILD + ' &mdash; ' + reason + '  (t=' + ms() + 'ms)';
+      box.appendChild(h);
+
+      var rootEl = document.getElementById('root');
+      line('bundle executed: <span class="ok">' + (document.getElementsByTagName('style').length > 1 ? 'YES' : 'NO') +
+           '</span>   #root children: ' + (rootEl ? rootEl.children.length : '?') +
+           '   loading screen: ' + (document.querySelector('[class*="app-loading"]') ? 'STILL PRESENT' : 'gone'), 'dim');
+
+      head('STREAMING SERVER URL  [press RED to force]');
+      line('current : <span class="' + (srv.current === SERVER_URL ? 'ok' : 'no') + '">' + srv.current + '</span>');
+      line('target  : <span class="dim">' + SERVER_URL + '</span>   ' + (srv.note || ''));
+
+      head('LAN SCAN for Stremio server  [press YELLOW]');
+      if (!scan.total) {
+        line('not run - press YELLOW to scan 192.168.100.1-254 for port 11470', 'dim');
+      } else {
+        line('subnet  : ' + (scan.subnet || '?'), 'dim');
+        line('progress: ' + scan.done + '/' + scan.total + (scan.running ? ' (scanning...)' : ' (done)'), 'wa');
+        if (scan.found.length) {
+          for (var fi = 0; fi < scan.found.length; fi++) {
+            line('FOUND: <span class="ok">http://' + scan.found[fi] + ':11470/</span>  <- put this in Settings -> SERVER');
+          }
+        } else if (!scan.running) {
+          line('no Stremio server found on this subnet', 'no');
+        }
+      }
+
+      head('AVPLAY SELF-TEST  [press GREEN to run / next stream]');
+      if (!selftest.ran) {
+        line('not run yet - press the GREEN button to test a direct HTTPS stream', 'dim');
+      } else {
+        var stCls = (selftest.stage.indexOf('PREPARED') === 0) ? 'ok'
+                  : (selftest.stage.indexOf('FAILED') !== -1 ? 'no' : 'wa');
+        line('stream  : ' + selftest.name, 'dim');
+        line('url     : <span class="dim">' + selftest.url + '</span>');
+        line('result  : <span class="' + stCls + '">' + selftest.stage + '</span>');
+        line('duration: ' + (selftest.duration || '-') +
+             '   currentTime samples: ' + (selftest.times.join(', ') || '-'));
+        var advancing = selftest.times.length > 1 &&
+                        Number(selftest.times[selftest.times.length - 1]) > Number(selftest.times[0]);
+        line('decoding: <span class="' + (advancing ? 'ok' : 'wa') + '">' +
+             (advancing ? 'YES - time is advancing, TV is playing it' : 'no movement yet') + '</span>');
+        if (selftest.err) { line('error   : <span class="no">' + selftest.err + '</span>'); }
+      }
+
+      head('TIZEN AVPLAY (native player)');
+      line('state: <span class="' + (avplay.state.indexOf('PREPARED') === 0 ? 'ok'
+            : (avplay.state.indexOf('FAILED') !== -1 ? 'no' : 'wa')) + '">' + avplay.state +
+           '</span>  open() calls: ' + avplay.opens + '  prepareAsync(): ' + avplay.prepares);
+      line('stream url: <span class="wa">' + (avplay.url || '(none yet)') + '</span>');
+      if (avplay.lastError) { line('last error: <span class="no">' + avplay.lastError + '</span>'); }
+
+      head('WEB WORKERS (' + workers.length + ')');
+      if (!workers.length) {
+        line('NONE created.', 'no');
+      } else {
+        for (var w = 0; w < workers.length; w++) {
+          var wr = workers[w];
+          var wc = (wr.state === 'ERROR') ? 'no' : (wr.msgs > 0 ? 'ok' : 'wa');
+          line('worker ' + (w + 1) + ': <span class="' + wc + '">' + wr.state +
+               '</span> messages back: ' + wr.msgs + ' <span class="dim">' + wr.url + '</span>');
+        }
+      }
+
+      head('NETWORK REQUESTS MADE BY THE APP (' + net.length + ')');
+      if (!net.length) {
+        line('NONE. The app made no network calls at all.', 'no');
+      } else {
+        for (var i = 0; i < net.length; i++) {
+          var r = net[i];
+          var st, cls;
+          if (!r.done) { st = 'PENDING &gt;&gt;&gt; NEVER SETTLED (' + (ms() - r.t0) + 'ms)'; cls = 'no'; }
+          else if (r.err) { st = 'FAILED: ' + r.err + ' (' + (r.t1 - r.t0) + 'ms)'; cls = 'no'; }
+          else { st = 'HTTP ' + r.status + ' (' + (r.t1 - r.t0) + 'ms)'; cls = 'ok'; }
+          line('<span class="dim">' + r.m + '</span> ' + r.u + '<br>&nbsp;&nbsp;&nbsp;<span class="' + cls + '">' + st + '</span>');
+        }
+      }
+
+      head('CONNECTIVITY / TLS SELF-TESTS');
+      for (var j = 0; j < probes.length; j++) {
+        var p = probes[j];
+        var pc = p.ok ? 'ok' : (p.state === 'running' ? 'wa' : 'no');
+        line(p.label + ': <span class="' + pc + '">' + p.state + '</span> <span class="dim">' + (p.note || p.url) + '</span>');
+      }
+
+      head('ERRORS / WARNINGS (' + errors.length + ')');
+      if (!errors.length) line('(none)', 'dim');
+      else { var pe = document.createElement('pre'); pe.className = 'no'; pe.innerHTML = errors.join('\n'); box.appendChild(pe); }
+
+      head('CONSOLE LOG (last 25 of ' + logs.length + ')');
+      var pl = document.createElement('pre');
+      pl.className = 'dim';
+      pl.innerHTML = logs.slice(-25).join('\n') || '(none)';
+      box.appendChild(pl);
+    }
+
+    var visible = false;
+    function hide() {
+      visible = false;
+      document.getElementById('diag').style.display = 'none';
+    }
+    function show(reason) {
+      visible = true;
+      document.getElementById('diag').style.display = 'block';
+      if (!shown) {
+        shown = true;
+        probe('api.strem.io POST', 'https://api.strem.io/api/login', 'POST', '{}', [200,400], 'expect 400; 405 = method dropped');
+        probe('cinemeta addon GET', 'https://v3-cinemeta.strem.io/manifest.json', 'GET', null, [200], '');
+        if (SERVER_URL) {
+          probe('streaming server', SERVER_URL + 'settings', 'GET', null, [200], 'the LAN Stremio server this app uses');
+        }
+        setInterval(function () { if (visible) { render(reason); } }, 2000);
+      }
+      render(reason);
+    }
+
+    setTimeout(function () {
+      var rootEl = document.getElementById('root');
+      if (!rootEl || rootEl.children.length === 0) show('APP NEVER MOUNTED');
+      else if (document.querySelector('[class*="app-loading"]')) show('STUCK ON LOADING SCREEN');
+    }, 45000);
+
+    /* ---- AVPlay self-test: can this TV play a plain direct HTTPS URL? ----
+       This is what a debrid / direct-link addon hands the player, with no
+       streaming server involved. Runs AVPlay directly, bypassing Stremio. */
+    var TESTS = [
+      { name: 'H.264 720p MP4 (HTTPS)', url: 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_1MB.mp4' },
+      { name: 'H.264 MP4 (HTTPS, larger)', url: 'https://media.w3.org/2010/05/sintel/trailer.mp4' },
+      { name: 'HLS m3u8 (HTTPS)', url: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8' },
+      { name: 'HEVC/H.265 720p MP4', url: 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h265/720/Big_Buck_Bunny_720_10s_1MB.mp4' },
+      { name: 'HEVC/H.265 1080p MP4', url: 'https://test-videos.co.uk/vids/jellyfish/mp4/h265/1080/Jellyfish_1080_10s_1MB.mp4' }
+    ];
+    var testIdx = 0;
+    var selftest = { ran: false, name: '', url: '', stage: '', times: [], duration: '', err: '' };
+
+    function runSelfTest() {
+      if (!window.webapis || !webapis.avplay) { selftest.err = 'webapis.avplay missing'; return; }
+      var t = TESTS[testIdx % TESTS.length];
+      testIdx++;
+      selftest = { ran: true, name: t.name, url: t.url, stage: 'starting', times: [], duration: '', err: '' };
+
+      /* AVPlay needs an <object type="application/avplayer"> render surface. */
+      var obj = document.getElementById('avtest');
+      if (!obj) {
+        obj = document.createElement('object');
+        obj.id = 'avtest';
+        obj.type = 'application/avplayer';
+        obj.style.position = 'fixed';
+        obj.style.left = '0'; obj.style.top = '0';
+        obj.style.width = '100%'; obj.style.height = '100%';
+        obj.style.zIndex = '1';
+        document.body.insertBefore(obj, document.body.firstChild);
+      }
+
+      try { webapis.avplay.close(); } catch (e) {}
+      try {
+        selftest.stage = 'open';
+        webapis.avplay.open(t.url);
+        selftest.stage = 'setDisplayRect';
+        webapis.avplay.setDisplayRect(0, 0,
+          window.innerWidth || 1920, window.innerHeight || 1080);
+        selftest.stage = 'prepareAsync';
+        var t0 = ms();
+        webapis.avplay.prepareAsync(function () {
+          selftest.stage = 'PREPARED in ' + (ms() - t0) + 'ms';
+          try { selftest.duration = String(webapis.avplay.getDuration()); } catch (e) { selftest.duration = 'err'; }
+          try { webapis.avplay.play(); selftest.stage += ' + play()'; } catch (e) { selftest.err = 'play(): ' + e.message; }
+          /* If currentTime advances, the TV is genuinely decoding. */
+          var n = 0;
+          var iv = setInterval(function () {
+            n++;
+            try { selftest.times.push(webapis.avplay.getCurrentTime()); } catch (e) { selftest.times.push('err'); }
+            if (n >= 5) { clearInterval(iv); }
+            if (shown) { render('AVPLAY SELF-TEST'); }
+          }, 1500);
+        }, function (e) {
+          selftest.stage = 'PREPARE FAILED after ' + (ms() - t0) + 'ms';
+          selftest.err = (e && (e.name || e.message)) ? (e.name + ': ' + e.message) : String(e);
+          if (shown) { render('AVPLAY SELF-TEST'); }
+        });
+      } catch (e) {
+        selftest.err = selftest.stage + ' threw: ' + e.message;
+      }
+      show('AVPLAY SELF-TEST');
+    }
+
+    /* ---- LAN scan for an existing Stremio streaming server ----------------
+       Any device already running Stremio (an LG webOS TV, a NAS, a phone)
+       serves the streaming server on 11470. If one answers, its URL can go
+       straight into Settings -> SERVER and torrents work with no debrid. */
+    /* Ask Tizen for this TV's own IP so the scan works on any network. */
+    function detectSubnet(cb) {
+      var done = false;
+      function finish(prefix, ip) { if (!done) { done = true; cb(prefix, ip); } }
+      function ask(prop) {
+        try {
+          tizen.systeminfo.getPropertyValue(prop, function (d) {
+            var ip = d && d.ipAddress;
+            if (ip && /^\d+\.\d+\.\d+\.\d+$/.test(ip)) { finish(ip.replace(/\.\d+$/, '.'), ip); }
+          }, function () {});
+        } catch (e) {}
+      }
+      if (window.tizen && tizen.systeminfo) { ask('ETHERNET_NETWORK'); ask('WIFI_NETWORK'); }
+      setTimeout(function () { finish(null, null); }, 2500);
+    }
+
+    function scanLan() {
+      if (scan.running) { return; }
+      detectSubnet(function (prefix, ip) { startScan(prefix, ip); });
+    }
+
+    function startScan(prefix, ownIp) {
+      /* Fall back to the configured server's subnet, then a common default. */
+      var base = prefix;
+      if (!base && SERVER_URL) {
+        var m = SERVER_URL.match(/^https?:\/\/(\d+\.\d+\.\d+)\./);
+        if (m) { base = m[1] + '.'; }
+      }
+      if (!base) { base = '192.168.1.'; }
+      scan.subnet = base + '0/24' + (ownIp ? '  (this TV: ' + ownIp + ')' : '  (guessed)');
+      var subnetLabel = scan.subnet;
+      scan = { running: true, done: 0, total: 254, found: [], subnet: subnetLabel };
+      show('LAN SCAN for Stremio server');
+
+      var next = 1;
+      function launch() {
+        while (next <= 254) {
+          var ip = base + (next++);
+          (function (ip) {
+            var x = new XMLHttpRequest();
+            var url = 'http://' + ip + ':11470/settings';
+            try {
+              x.open('GET', url, true);
+              x.timeout = 4000;
+              x.onload = function () {
+                if (x.status === 200 && /server|values|cacheSize|appPath/i.test(x.responseText || '')) {
+                  scan.found.push(ip);
+                }
+                scan.done++;
+              };
+              x.onerror = function () { scan.done++; };
+              x.ontimeout = function () { scan.done++; };
+              x.send();
+            } catch (e) { scan.done++; }
+          })(ip);
+        }
+      }
+      launch();
+
+      var iv = setInterval(function () {
+        if (visible) { render('LAN SCAN for Stremio server'); }
+        if (scan.done >= scan.total) { scan.running = false; clearInterval(iv); }
+      }, 1000);
+    }
+
+    /* ---- what APIs does this web runtime actually expose? ---- */
+    function listApis(obj, prefix) {
+      var out = [];
+      try { for (var k in obj) { out.push(prefix + k); } } catch (e) {}
+      return out.sort();
+    }
+
+    /* ---- point the core at the LAN streaming server --------------------
+       Typing ':' on the TV keyboard is painful and easy to get wrong (a '/'
+       instead of ':' silently points at port 80). CoreProvider publishes the
+       transport as window.core once init resolves, so set it directly using
+       the same dispatch shape stremio-web's useSettings uses. */
+    var SERVER_URL = '__SERVER_URL__';
+    var srv = { current: '(unknown)', applied: false, note: '' };
+
+    function applyServerUrl(force) {
+      if (!SERVER_URL) { srv.note = 'no server baked into this build'; return; }
+      if (!window.core || !window.core.getState) { srv.note = 'core not ready'; return; }
+      window.core.getState('ctx').then(function (ctx) {
+        var settings = ctx && ctx.profile && ctx.profile.settings;
+        if (!settings) { srv.note = 'no settings in ctx'; return; }
+        srv.current = String(settings.streamingServerUrl);
+
+        /* Only auto-correct the stock default or a mistyped address.
+           A URL the user deliberately set is left alone unless forced. */
+        var stock = srv.current === 'http://127.0.0.1:11470/' || srv.current === 'http://127.0.0.1:11470';
+        var mistyped = srv.current.indexOf('192.168.100.15') !== -1 && srv.current.indexOf(':11470') === -1;
+        if (!force && !stock && !mistyped) { srv.note = 'left as-is (user set)'; return; }
+        if (srv.current === SERVER_URL) { srv.note = 'already correct'; srv.applied = true; return; }
+
+        var merged = {};
+        for (var k in settings) { merged[k] = settings[k]; }
+        merged.streamingServerUrl = SERVER_URL;
+        try {
+          window.core.dispatch({ action: 'Ctx', args: { action: 'AddServerUrl', args: SERVER_URL } });
+          window.core.dispatch({ action: 'Ctx', args: { action: 'UpdateSettings', args: merged } });
+          srv.applied = true;
+          srv.current = SERVER_URL;
+          srv.note = 'set to ' + SERVER_URL;
+          note('streamingServerUrl -> ' + SERVER_URL);
+        } catch (e) { srv.note = 'dispatch failed: ' + e.message; }
+      }, function (e) { srv.note = 'getState failed: ' + (e && e.message ? e.message : String(e)); });
+    }
+
+    /* Core needs a moment to initialise before window.core exists. */
+    var srvTries = 0;
+    var srvIv = setInterval(function () {
+      srvTries++;
+      if (window.core && window.core.getState) { applyServerUrl(false); clearInterval(srvIv); }
+      else if (srvTries > 40) { srv.note = 'window.core never appeared'; clearInterval(srvIv); }
+    }, 1000);
+
+    /* Diagnostic trigger.
+       NOT the BACK/RETURN key (10009) - the app needs that for navigation,
+       and binding it here swallowed every Back press. Use the BLUE colour
+       button instead, which must be registered with Tizen to emit events. */
+    try {
+      if (window.tizen && tizen.tvinputdevice) {
+        tizen.tvinputdevice.registerKey('ColorF3Blue');
+        tizen.tvinputdevice.registerKey('ColorF1Green');
+        tizen.tvinputdevice.registerKey('ColorF2Yellow');
+        tizen.tvinputdevice.registerKey('ColorF0Red');
+      }
+    } catch (e) {}
+
+    document.addEventListener('keydown', function (ev) {
+      if (ev.keyCode === 406) { if (visible) { hide(); } else { show('MANUAL (blue button)'); } }
+      if (ev.keyCode === 404) { runSelfTest(); }   /* GREEN  = AVPlay self-test */
+      if (ev.keyCode === 405) { scanLan(); }       /* YELLOW = scan LAN for server */
+      if (ev.keyCode === 403) { applyServerUrl(true); show('SERVER URL FORCED'); }  /* RED */
+    });
+  })();
+  </script>
+
+  <script src="bundle.js"></script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+{
+  "name": "stremio-for-old-tizen",
+  "version": "1.0.0",
+  "description": "Patches the Stremio Theater WGT so it runs on Samsung Tizen 3.0 TVs (2017 models, Chromium 47)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vladidraganov/stremio-for-old-tizen"
+  },
+  "keywords": [
+    "stremio",
+    "tizen",
+    "samsung",
+    "smart-tv",
+    "tizen-3",
+    "chromium-47",
+    "es5"
+  ],
+  "engines": {
+    "node": ">=16"
+  },
+  "scripts": {
+    "build": "node --max-old-space-size=8192 build.js",
+    "verify": "node --max-old-space-size=8192 verify.js",
+    "test": "node test/subnet.test.js && node --max-old-space-size=8192 test/destructure.test.js && node --max-old-space-size=8192 test/mergeprops.test.js",
+    "tv:info": "node tools/sdb-probe.js"
+  },
+  "dependencies": {
+    "@babel/core": "^7.24.0",
+    "@babel/preset-env": "^7.24.0",
+    "acorn": "^8.11.0",
+    "jszip": "^3.10.1",
+    "regenerator-runtime": "^0.14.1"
+  }
+}
