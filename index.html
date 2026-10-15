@@ -214,33 +214,6 @@
       };
     }
 
-    /* ---- live TLS / connectivity self-tests ---- */
-    var probes = [];
-    /* okCodes: HTTP statuses that mean "this worked". A POST to /api/login with
-       an empty body legitimately answers 400 - that is a SUCCESS here, because
-       it proves the POST method survived. A 405 would mean the method was
-       dropped (the Reflect.set failure we fixed). */
-    function probe(label, url, method, body, okCodes, note) {
-      var p = { label: label, url: url, state: 'running', t0: ms(),
-                ok: false, okCodes: okCodes || [200], note: note || '' };
-      probes.push(p);
-      try {
-        var x = new XMLHttpRequest();
-        x.open(method || 'GET', url, true);
-        if (body) { try { x.setRequestHeader('Content-Type', 'application/json'); } catch (e) {} }
-        x.timeout = 15000;
-        x.onload = function () {
-          p.state = 'HTTP ' + x.status;
-          p.t1 = ms();
-          for (var i = 0; i < p.okCodes.length; i++) { if (x.status === p.okCodes[i]) { p.ok = true; } }
-          if (x.status === 405) { p.state += ' - METHOD DROPPED'; }
-        };
-        x.onerror = function () { p.state = 'FAILED (TLS/network)'; p.t1 = ms(); };
-        x.ontimeout = function () { p.state = 'TIMEOUT'; p.t1 = ms(); };
-        x.send(body || null);
-      } catch (e) { p.state = 'THREW ' + e.message; }
-    }
-
     var D;
     function line(html, cls) {
       var d = document.createElement('div');
@@ -264,9 +237,12 @@
            '</span>   #root children: ' + (rootEl ? rootEl.children.length : '?') +
            '   loading screen: ' + (document.querySelector('[class*="app-loading"]') ? 'STILL PRESENT' : 'gone'), 'dim');
 
-      head('STREAMING SERVER URL  [press RED to force]');
-      line('current : <span class="' + (srv.current === SERVER_URL ? 'ok' : 'no') + '">' + srv.current + '</span>');
-      line('target  : <span class="dim">' + SERVER_URL + '</span>   ' + (srv.note || ''));
+      head('STREAMING SERVER');
+      var sc = srvCheck === 'answering' ? 'ok' : (srvCheck === 'checking...' ? 'wa' : 'no');
+      line('in use  : ' + esc(srv.current) + '  <span class="' + sc + '">' + srvCheck + '</span>');
+      if (SERVER_URL) {
+        line('built-in: <span class="dim">' + esc(SERVER_URL) + '</span>   ' + esc(srv.note || ''));
+      }
 
       head('LAN SCAN for Stremio server  [press YELLOW]');
       if (!scan.total) {
@@ -283,24 +259,6 @@
         } else if (!scan.running) {
           line('no Stremio server found on this subnet', 'no');
         }
-      }
-
-      head('AVPLAY SELF-TEST  [press GREEN to run / next stream]');
-      if (!selftest.ran) {
-        line('not run yet - press the GREEN button to test a direct HTTPS stream', 'dim');
-      } else {
-        var stCls = (selftest.stage.indexOf('PREPARED') === 0) ? 'ok'
-                  : (selftest.stage.indexOf('FAILED') !== -1 ? 'no' : 'wa');
-        line('stream  : ' + selftest.name, 'dim');
-        line('url     : <span class="dim">' + selftest.url + '</span>');
-        line('result  : <span class="' + stCls + '">' + selftest.stage + '</span>');
-        line('duration: ' + (selftest.duration || '-') +
-             '   currentTime samples: ' + (selftest.times.join(', ') || '-'));
-        var advancing = selftest.times.length > 1 &&
-                        Number(selftest.times[selftest.times.length - 1]) > Number(selftest.times[0]);
-        line('decoding: <span class="' + (advancing ? 'ok' : 'wa') + '">' +
-             (advancing ? 'YES - time is advancing, TV is playing it' : 'no movement yet') + '</span>');
-        if (selftest.err) { line('error   : <span class="no">' + selftest.err + '</span>'); }
       }
 
       head('TIZEN AVPLAY (native player)');
@@ -336,13 +294,6 @@
         }
       }
 
-      head('CONNECTIVITY / TLS SELF-TESTS');
-      for (var j = 0; j < probes.length; j++) {
-        var p = probes[j];
-        var pc = p.ok ? 'ok' : (p.state === 'running' ? 'wa' : 'no');
-        line(p.label + ': <span class="' + pc + '">' + p.state + '</span> <span class="dim">' + (p.note || p.url) + '</span>');
-      }
-
       head('ERRORS / WARNINGS (' + errors.length + ')');
       if (!errors.length) line('(none)', 'dim');
       else { var pe = document.createElement('pre'); pe.className = 'no'; pe.innerHTML = errors.join('\n'); box.appendChild(pe); }
@@ -359,19 +310,30 @@
       visible = false;
       document.getElementById('diag').style.display = 'none';
     }
+    var lastReason = '';
     function show(reason) {
       visible = true;
+      lastReason = reason;
       document.getElementById('diag').style.display = 'block';
+      checkInUse();
       if (!shown) {
         shown = true;
-        probe('api.strem.io POST', 'https://api.strem.io/api/login', 'POST', '{}', [200,400], 'expect 400; 405 = method dropped');
-        probe('cinemeta addon GET', 'https://v3-cinemeta.strem.io/manifest.json', 'GET', null, [200], '');
-        if (SERVER_URL) {
-          probe('streaming server', SERVER_URL + 'settings', 'GET', null, [200], 'the LAN Stremio server this app uses');
-        }
-        setInterval(function () { if (visible) { render(reason); } }, 2000);
+        setInterval(function () { if (visible) { render(lastReason); } }, 2000);
       }
       render(reason);
+    }
+
+    /* Is the server Stremio is actually set to use answering right now? */
+    var srvCheck = 'not checked';
+    function checkInUse() {
+      srvCheck = 'checking...';
+      refreshCurrent(function () {
+        if (!/^https?:\/\//.test(srv.current)) { srvCheck = 'unknown (Stremio still starting)'; return; }
+        checkServer(srv.current, function (ok) {
+          srvCheck = ok ? 'answering' : 'NOT answering';
+          if (visible) { render(lastReason); }
+        });
+      });
     }
 
     setTimeout(function () {
@@ -379,70 +341,6 @@
       if (!rootEl || rootEl.children.length === 0) show('APP NEVER MOUNTED');
       else if (document.querySelector('[class*="app-loading"]')) show('STUCK ON LOADING SCREEN');
     }, 45000);
-
-    /* ---- AVPlay self-test: can this TV play a plain direct HTTPS URL? ----
-       This is what a debrid / direct-link addon hands the player, with no
-       streaming server involved. Runs AVPlay directly, bypassing Stremio. */
-    var TESTS = [
-      { name: 'H.264 720p MP4 (HTTPS)', url: 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_1MB.mp4' },
-      { name: 'H.264 MP4 (HTTPS, larger)', url: 'https://media.w3.org/2010/05/sintel/trailer.mp4' },
-      { name: 'HLS m3u8 (HTTPS)', url: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8' },
-      { name: 'HEVC/H.265 720p MP4', url: 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h265/720/Big_Buck_Bunny_720_10s_1MB.mp4' },
-      { name: 'HEVC/H.265 1080p MP4', url: 'https://test-videos.co.uk/vids/jellyfish/mp4/h265/1080/Jellyfish_1080_10s_1MB.mp4' }
-    ];
-    var testIdx = 0;
-    var selftest = { ran: false, name: '', url: '', stage: '', times: [], duration: '', err: '' };
-
-    function runSelfTest() {
-      if (!window.webapis || !webapis.avplay) { selftest.err = 'webapis.avplay missing'; return; }
-      var t = TESTS[testIdx % TESTS.length];
-      testIdx++;
-      selftest = { ran: true, name: t.name, url: t.url, stage: 'starting', times: [], duration: '', err: '' };
-
-      /* AVPlay needs an <object type="application/avplayer"> render surface. */
-      var obj = document.getElementById('avtest');
-      if (!obj) {
-        obj = document.createElement('object');
-        obj.id = 'avtest';
-        obj.type = 'application/avplayer';
-        obj.style.position = 'fixed';
-        obj.style.left = '0'; obj.style.top = '0';
-        obj.style.width = '100%'; obj.style.height = '100%';
-        obj.style.zIndex = '1';
-        document.body.insertBefore(obj, document.body.firstChild);
-      }
-
-      try { webapis.avplay.close(); } catch (e) {}
-      try {
-        selftest.stage = 'open';
-        webapis.avplay.open(t.url);
-        selftest.stage = 'setDisplayRect';
-        webapis.avplay.setDisplayRect(0, 0,
-          window.innerWidth || 1920, window.innerHeight || 1080);
-        selftest.stage = 'prepareAsync';
-        var t0 = ms();
-        webapis.avplay.prepareAsync(function () {
-          selftest.stage = 'PREPARED in ' + (ms() - t0) + 'ms';
-          try { selftest.duration = String(webapis.avplay.getDuration()); } catch (e) { selftest.duration = 'err'; }
-          try { webapis.avplay.play(); selftest.stage += ' + play()'; } catch (e) { selftest.err = 'play(): ' + e.message; }
-          /* If currentTime advances, the TV is genuinely decoding. */
-          var n = 0;
-          var iv = setInterval(function () {
-            n++;
-            try { selftest.times.push(webapis.avplay.getCurrentTime()); } catch (e) { selftest.times.push('err'); }
-            if (n >= 5) { clearInterval(iv); }
-            if (shown) { render('AVPLAY SELF-TEST'); }
-          }, 1500);
-        }, function (e) {
-          selftest.stage = 'PREPARE FAILED after ' + (ms() - t0) + 'ms';
-          selftest.err = (e && (e.name || e.message)) ? (e.name + ': ' + e.message) : String(e);
-          if (shown) { render('AVPLAY SELF-TEST'); }
-        });
-      } catch (e) {
-        selftest.err = selftest.stage + ' threw: ' + e.message;
-      }
-      show('AVPLAY SELF-TEST');
-    }
 
     /* ---- LAN scan for an existing Stremio streaming server ----------------
        Any device already running Stremio (an LG webOS TV, a NAS, a phone)
@@ -789,13 +687,6 @@
       }
     }, true);
 
-    /* ---- what APIs does this web runtime actually expose? ---- */
-    function listApis(obj, prefix) {
-      var out = [];
-      try { for (var k in obj) { out.push(prefix + k); } } catch (e) {}
-      return out.sort();
-    }
-
     /* ---- point the core at the LAN streaming server --------------------
        Typing ':' on the TV keyboard is painful and easy to get wrong (a '/'
        instead of ':' silently points at port 80). CoreProvider publishes the
@@ -804,7 +695,7 @@
     var SERVER_URL = '__SERVER_URL__';
     var srv = { current: '(unknown)', applied: false, note: '' };
 
-    function applyServerUrl(force) {
+    function applyServerUrl() {
       if (!SERVER_URL) { srv.note = 'no server baked into this build'; return; }
       if (!window.core || !window.core.getState) { srv.note = 'core not ready'; return; }
       window.core.getState('ctx').then(function (ctx) {
@@ -813,13 +704,13 @@
         srv.current = String(settings.streamingServerUrl);
 
         /* Only auto-correct the stock default or a mistyped address.
-           A URL the user deliberately set is left alone unless forced. */
+           A URL the user deliberately set is left alone. */
         var stock = srv.current === 'http://127.0.0.1:11470/' || srv.current === 'http://127.0.0.1:11470';
         /* Same host as the configured server but no port: almost certainly a
            ':' typed as '/' on the TV keyboard, which points at port 80. */
         var host = (SERVER_URL.match(/^https?:\/\/([^:\/]+)/) || [])[1] || '';
         var mistyped = !!host && srv.current.indexOf(host) !== -1 && !/:\d+/.test(srv.current);
-        if (!force && !stock && !mistyped) { srv.note = 'left as-is (user set)'; return; }
+        if (!stock && !mistyped) { srv.note = 'left as-is (user set)'; return; }
         if (srv.current === SERVER_URL) { srv.note = 'already correct'; srv.applied = true; return; }
 
         setServerUrl(SERVER_URL, function (err) {
@@ -900,7 +791,7 @@
       if (window.core && window.core.getState) {
         clearInterval(srvIv);
         note('core ready after ' + srvTries + 's - server check in 3s');
-        applyServerUrl(false);
+        applyServerUrl();
         setTimeout(autoDiscover, 3000);    /* after any baked-in URL has landed */
       } else if (srvTries > 40) {
         srv.note = 'window.core never appeared';
@@ -909,24 +800,19 @@
       }
     }, 1000);
 
-    /* Diagnostic trigger.
-       NOT the BACK/RETURN key (10009) - the app needs that for navigation,
-       and binding it here swallowed every Back press. Use the BLUE colour
-       button instead, which must be registered with Tizen to emit events. */
+    /* Colour buttons. Never the BACK/RETURN key (10009): the app needs it for
+       navigation. Colour keys only emit events once registered with Tizen;
+       RED and GREEN are deliberately left unregistered for the app to use. */
     try {
       if (window.tizen && tizen.tvinputdevice) {
-        tizen.tvinputdevice.registerKey('ColorF3Blue');
-        tizen.tvinputdevice.registerKey('ColorF1Green');
         tizen.tvinputdevice.registerKey('ColorF2Yellow');
-        tizen.tvinputdevice.registerKey('ColorF0Red');
+        tizen.tvinputdevice.registerKey('ColorF3Blue');
       }
     } catch (e) {}
 
     document.addEventListener('keydown', function (ev) {
-      if (ev.keyCode === 406) { if (visible) { hide(); } else { show('MANUAL (blue button)'); } }
-      if (ev.keyCode === 404) { runSelfTest(); }   /* GREEN  = AVPlay self-test */
-      if (ev.keyCode === 405) { scanLan({ manual: true }); }   /* YELLOW = find a server */
-      if (ev.keyCode === 403) { applyServerUrl(true); show('SERVER URL FORCED'); }  /* RED */
+      if (ev.keyCode === 405) { scanLan({ manual: true }); }                        /* YELLOW: find a server */
+      if (ev.keyCode === 406) { if (visible) { hide(); } else { show('MANUAL (blue button)'); } }   /* BLUE */
     });
   })();
   </script>

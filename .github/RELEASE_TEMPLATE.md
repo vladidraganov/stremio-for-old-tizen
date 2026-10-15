@@ -35,10 +35,8 @@ These TVs refuse to start the web inspector, so the app carries its own.
 
 | Button | Action |
 |---|---|
-| **BLUE** | Toggle the diagnostic overlay |
-| **GREEN** | Player self-test — cycles 5 direct streams |
 | **YELLOW** | Find a Stremio server on your network and pick it |
-| **RED** | Re-apply the configured server URL |
+| **BLUE** | Toggle the diagnostic overlay |
 
 Reporting a problem? Press BLUE and attach a photo of the screen — it shows the
 engine version, errors with stack traces, network requests and the player state.

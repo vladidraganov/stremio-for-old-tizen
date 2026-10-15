@@ -16,7 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 
-const KEY = { OK: 13, UP: 38, DOWN: 40, BACK: 10009, YELLOW: 405 };
+const KEY = { OK: 13, UP: 38, DOWN: 40, BACK: 10009, YELLOW: 405, BLUE: 406, RED: 403, GREEN: 404 };
 const WEBOS_PATH = '/media/cryptofs/apps/usr/palm/services/io.strem.tv.server/.stremio-server';
 
 function settingsJson(version, appPath) {
@@ -36,6 +36,7 @@ function bootTv({ servers = {}, current = 'http://127.0.0.1:11470/', seed = {}, 
     .replace('<script src="bundle.js"></script>', '');
 
   const dispatched = [];
+  const requests = [];
   const appKeys = [];
   const state = {
     settings: { streamingServerUrl: current, interfaceLanguage: 'eng', subtitlesSize: 100 },
@@ -59,7 +60,7 @@ function bootTv({ servers = {}, current = 'http://127.0.0.1:11470/', seed = {}, 
         constructor() { this.listeners = {}; this.status = 0; this.responseText = ''; }
         addEventListener(t, fn) { (this.listeners[t] = this.listeners[t] || []).push(fn); }
         fire(t) { if (this['on' + t]) this['on' + t](); (this.listeners[t] || []).forEach((f) => f()); }
-        open(method, url) { this.url = url; }
+        open(method, url) { this.url = url; requests.push(method + ' ' + url); }
         setRequestHeader() {}
         send() {
           setTimeout(() => {
@@ -124,7 +125,7 @@ function bootTv({ servers = {}, current = 'http://127.0.0.1:11470/', seed = {}, 
   const isOpen = () => promptEl().className === 'open';
   const text = () => promptEl().textContent.replace(/\s+/g, ' ').trim();
 
-  return { dom, win, dispatched, appKeys, state, press, isOpen, text, promptEl };
+  return { dom, win, dispatched, requests, appKeys, state, press, isOpen, text, promptEl };
 }
 
 function waitFor(fn, ms, label) {
@@ -269,6 +270,34 @@ const scenarios = {
     assert.ok(!tv.isOpen(), 'closed');
     await sleep(1500);                                   // scan completes in the background
     assert.ok(!tv.isOpen(), 'a finished scan must not reopen a cancelled picker');
+    tv.dom.window.close();
+  },
+
+  async 'BLUE shows the server in use and never calls Stremio\'s API'() {
+    const tv = bootTv({
+      current: 'http://192.168.7.100:11470/',
+      servers: { 'http://192.168.7.100:11470/': { version: '4.20.11', appPath: WEBOS_PATH } },
+    });
+    await sleep(1500);                                   // core ready
+    tv.press(KEY.BLUE);
+    const diag = () => tv.win.document.getElementById('diag');
+    assert.strictEqual(diag().style.display, 'block', 'BLUE opens the overlay');
+    await waitFor(() => /in use\s*:\s*http:\/\/192\.168\.7\.100:11470\/\s*answering/.test(diag().textContent),
+                  4000, 'overlay reports the in-use server as answering');
+    assert.ok(!/SELF-TEST|CONNECTIVITY/.test(diag().textContent), 'debug-only sections are gone');
+
+    const external = tv.requests.filter((r) => /strem\.io|test-videos|media\.w3\.org|mux\.dev/.test(r));
+    assert.deepStrictEqual(external, [], 'no requests to Stremio or test-video hosts: ' + external);
+
+    tv.press(KEY.BLUE);
+    assert.strictEqual(diag().style.display, 'none', 'BLUE toggles it off');
+
+    // RED and GREEN are no longer ours: they must reach the app untouched.
+    tv.appKeys.length = 0;
+    tv.press(KEY.RED);
+    tv.press(KEY.GREEN);
+    assert.deepStrictEqual(tv.appKeys, [KEY.RED, KEY.GREEN], 'RED/GREEN pass through to the app');
+    assert.strictEqual(diag().style.display, 'none', 'and do not open anything');
     tv.dom.window.close();
   },
 

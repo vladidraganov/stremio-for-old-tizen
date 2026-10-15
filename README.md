@@ -95,8 +95,8 @@ version matches what is already installed.
 |---|---|
 | **YELLOW** | Find a Stremio server on your network and pick it |
 | **BLUE** | Toggle the diagnostic overlay |
-| **GREEN** | AVPlay self-test — cycles 5 direct streams (H.264 ×2, HLS, HEVC ×2) |
-| **RED** | Re-apply the server set with `--server` at build time |
+
+RED and GREEN are left alone for Stremio itself.
 
 ## On-screen diagnostics
 
@@ -180,8 +180,7 @@ can stop it moving entirely by giving that device a fixed IP (a "DHCP
 reservation") in your router's settings.
 
 **A torrent won't start but others work.** Usually the release, not the TV.
-Prefer well-seeded **x264**; HEVC 10-bit is less reliable. Press GREEN and cycle
-to the HEVC entries to test your set.
+Prefer well-seeded **x264**; HEVC 10-bit is less reliable on these sets.
 
 ## Contributing
 
