@@ -18,12 +18,11 @@ A Tizen web app cannot run a BitTorrent engine — these TVs allow no sockets an
 will not start a process ([why](../blob/main/docs/TECHNICAL.md#why-the-streaming-server-cannot-run-on-the-tv)).
 Pick one:
 
-- **Point at a Stremio server on your network.** Anything already running
-  Stremio works — an LG webOS TV, a NAS, a Raspberry Pi, a PC.
-  Press **YELLOW** in the app to scan your network and find it, then enter the
-  address in **Settings → SERVER → EDIT_URL**.
-  Watch the `:` — on the TV keyboard it lives on the symbols page, and typing
-  `/` instead silently points at port 80.
+- **Use a Stremio server on your network.** Anything already running Stremio
+  works — an LG webOS TV, a NAS, a Raspberry Pi, a PC. No typing needed: when
+  the app can't reach a server it searches your network and asks
+  *"Stremio server found — use it?"*. Press **OK**. You can also press
+  **YELLOW** at any time to search and pick one.
 - **Use direct links.** With a debrid service (Real-Debrid, AllDebrid,
   Premiumize) set up in an addon like Torrentio, streams arrive as plain HTTPS
   URLs and play with no server at all.
@@ -38,7 +37,7 @@ These TVs refuse to start the web inspector, so the app carries its own.
 |---|---|
 | **BLUE** | Toggle the diagnostic overlay |
 | **GREEN** | Player self-test — cycles 5 direct streams |
-| **YELLOW** | Scan your network for a Stremio server |
+| **YELLOW** | Find a Stremio server on your network and pick it |
 | **RED** | Re-apply the configured server URL |
 
 Reporting a problem? Press BLUE and attach a photo of the screen — it shows the

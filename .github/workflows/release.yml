@@ -58,6 +58,7 @@ jobs:
       - name: Tests
         run: |
           node test/subnet.test.js
+          node test/server-prompt.test.js
           node --max-old-space-size=8192 test/destructure.test.js "Stremio-Tizen3-${{ github.ref_name || 'manual' }}.wgt"
           node --max-old-space-size=8192 test/mergeprops.test.js "Stremio-Tizen3-${{ github.ref_name || 'manual' }}.wgt"
 

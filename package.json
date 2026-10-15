@@ -22,7 +22,7 @@
   "scripts": {
     "build": "node --max-old-space-size=8192 build.js",
     "verify": "node --max-old-space-size=8192 verify.js",
-    "test": "node test/subnet.test.js && node --max-old-space-size=8192 test/destructure.test.js && node --max-old-space-size=8192 test/mergeprops.test.js",
+    "test": "node test/subnet.test.js && node test/server-prompt.test.js && node --max-old-space-size=8192 test/destructure.test.js && node --max-old-space-size=8192 test/mergeprops.test.js",
     "tv:info": "node tools/sdb-probe.js"
   },
   "dependencies": {
@@ -31,5 +31,8 @@
     "acorn": "^8.11.0",
     "jszip": "^3.10.1",
     "regenerator-runtime": "^0.14.1"
+  },
+  "devDependencies": {
+    "jsdom": "^30.1.3"
   }
 }

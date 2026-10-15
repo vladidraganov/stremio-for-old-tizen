@@ -59,16 +59,19 @@ A Tizen **web** app cannot run a BitTorrent engine — there are no sockets, and
 these TVs will not start a process ([details](docs/TECHNICAL.md#why-the-streaming-server-cannot-run-on-the-tv)).
 You have two options:
 
-**1. Point at a Stremio server on your network** — any machine already running
-Stremio works: an LG webOS TV, a NAS, a Raspberry Pi, a PC.
+**1. Use a Stremio server on your network** — any machine already running
+Stremio works: an LG webOS TV, a NAS, a Raspberry Pi, a PC. **You don't need to
+know its address or type anything.**
 
-```sh
-npm run build -- Stremio-Tizen4.wgt out.wgt --server=http://192.168.1.50:11470/
-```
+- **On launch**, if the configured server isn't answering, the app searches your
+  network and offers what it finds — *"Stremio server found: LG TV (webOS) ·
+  v4.20.11"*. Press **OK** to use it.
+- **Any time**, press **YELLOW** to search and pick a server yourself.
 
-Don't know the address? Build without `--server`, install, then press
-**YELLOW** on the TV — it scans your subnet and prints any Stremio server it
-finds.
+This also handles the common case where your router gives the server a new IP
+address: next launch, the app notices the old one is gone and offers the new
+one. Choose *Not now* and that server won't be offered automatically again
+(YELLOW still lists it).
 
 **2. Use direct-link streams** — with a debrid service (Real-Debrid, AllDebrid,
 Premiumize) configured in an addon such as Torrentio, streams arrive as plain
@@ -78,24 +81,27 @@ HTTPS URLs. Those play natively with no server at all.
 
 | Option | Purpose |
 |---|---|
-| `--server=http://host:port/` | Bake in the streaming server URL |
 | `--build=N` | Set the build number (default: taken from the output filename) |
+| `--server=http://host:port/` | Optional. Pre-set a streaming server for a fresh install — rarely needed now that the app finds servers itself |
 | `STREMIO_SERVER=...` | Same as `--server`, via environment |
 
 **Always change the output filename or `--build` between builds.** The widget
 version is derived from it, and Tizen silently skips installing a package whose
 version matches what is already installed.
 
-## On-screen diagnostics
-
-These TVs will not start the web inspector, so the app carries its own overlay.
+## Remote buttons
 
 | Button | Action |
 |---|---|
+| **YELLOW** | Find a Stremio server on your network and pick it |
 | **BLUE** | Toggle the diagnostic overlay |
 | **GREEN** | AVPlay self-test — cycles 5 direct streams (H.264 ×2, HLS, HEVC ×2) |
-| **YELLOW** | Scan the local subnet for a Stremio server |
-| **RED** | Re-apply the configured streaming server URL |
+| **RED** | Re-apply the server set with `--server` at build time |
+
+## On-screen diagnostics
+
+These TVs will not start the web inspector, so the app carries its own overlay
+(**BLUE**).
 
 It opens by itself if the app is still loading after 45 s, and reports console
 output, errors with stack traces, unhandled rejections, every network request,
@@ -163,10 +169,15 @@ errors. Make sure you installed a *patched* build, not the upstream `.wgt`.
 **Login fails with a 405.** The `Reflect` shim didn't apply — rebuild and check
 for `FIX 3` in the output.
 
-**Server shows Offline.** Press YELLOW to find a server, or RED to re-apply the
-configured URL. The machine hosting it must be awake with Stremio running.
-Careful typing `:` on the TV keyboard — it is on the symbols page, and a `/`
-instead silently points at port 80.
+**Server shows Offline.** Press **YELLOW** and pick a server — no typing needed.
+The machine hosting it must be awake with Stremio open. If YELLOW finds nothing,
+check that device is on the same network as the TV. If you do type an address
+in Settings, note that `:` is on the keyboard's symbols page; a `/` in its place
+silently points at port 80.
+
+**The server keeps changing address.** The app re-finds it on launch, but you
+can stop it moving entirely by giving that device a fixed IP (a "DHCP
+reservation") in your router's settings.
 
 **A torrent won't start but others work.** Usually the release, not the TV.
 Prefer well-seeded **x264**; HEVC 10-bit is less reliable. Press GREEN and cycle

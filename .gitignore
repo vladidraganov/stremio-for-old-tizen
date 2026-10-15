@@ -16,3 +16,6 @@ work/
 .DS_Store
 Thumbs.db
 *.log
+
+# Local tool config
+.claude/

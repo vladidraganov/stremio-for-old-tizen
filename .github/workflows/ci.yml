@@ -40,6 +40,7 @@ jobs:
       - name: Unit tests
         run: |
           node test/subnet.test.js
+          node test/server-prompt.test.js
           node --max-old-space-size=8192 test/destructure.test.js Stremio-Tizen3-ci.wgt
           node --max-old-space-size=8192 test/mergeprops.test.js Stremio-Tizen3-ci.wgt
 

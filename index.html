@@ -19,11 +19,34 @@
     #diag .wa{color:#ffc14d;}
     #diag .dim{color:#a9a9c4;}
     #diag pre{white-space:pre-wrap;word-wrap:break-word;margin:2px 0;font-size:16px;}
+
+    /* Streaming-server picker. ES5-era CSS only: no variables, no grid. */
+    #srvprompt{display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483600;
+               background:rgba(8,7,20,0.78);font-family:'PlusJakartaSans',Arial,sans-serif;
+               -webkit-box-align:center;-webkit-align-items:center;align-items:center;
+               -webkit-box-pack:center;-webkit-justify-content:center;justify-content:center;}
+    #srvprompt.open{display:-webkit-box;display:-webkit-flex;display:flex;}
+    #srvprompt .sp-card{width:980px;max-width:86%;background:#1b1934;border-radius:22px;
+                        padding:46px 52px 38px;box-shadow:0 30px 90px rgba(0,0,0,0.6);color:#fff;}
+    #srvprompt .sp-title{font-size:40px;font-weight:bold;margin:0 0 12px;}
+    #srvprompt .sp-sub{font-size:26px;color:#b9b6d6;margin:0 0 32px;line-height:1.35;}
+    #srvprompt .sp-row{border:3px solid transparent;border-radius:14px;padding:20px 26px;
+                       margin-bottom:12px;background:#24224a;}
+    #srvprompt .sp-row.sel{border-color:#8c6bff;background:#33307a;}
+    #srvprompt .sp-main{font-size:30px;font-weight:bold;}
+    #srvprompt .sp-meta{font-size:22px;color:#b9b6d6;margin-top:6px;}
+    #srvprompt .sp-tag{font-size:20px;color:#4ad07a;margin-left:12px;font-weight:normal;}
+    #srvprompt .sp-bar{height:10px;background:#24224a;border-radius:5px;overflow:hidden;margin:6px 0 10px;}
+    #srvprompt .sp-fill{height:10px;background:#8c6bff;width:0;}
+    #srvprompt .sp-hint{font-size:21px;color:#8e8aad;margin-top:24px;}
+    #srvprompt .sp-ok{color:#4ad07a;}
+    #srvprompt .sp-bad{color:#ff7a7a;}
   </style>
 </head>
 <body>
   <div id="root"></div>
   <div id="diag"></div>
+  <div id="srvprompt"></div>
 
   <!-- ES5-ONLY instrumentation. MUST run before bundle.js. -->
   <script>
@@ -253,7 +276,9 @@
         line('progress: ' + scan.done + '/' + scan.total + (scan.running ? ' (scanning...)' : ' (done)'), 'wa');
         if (scan.found.length) {
           for (var fi = 0; fi < scan.found.length; fi++) {
-            line('FOUND: <span class="ok">http://' + scan.found[fi] + ':11470/</span>  <- put this in Settings -> SERVER');
+            var fs0 = scan.found[fi];
+            line('FOUND: <span class="ok">' + esc(fs0.url) + '</span>  ' +
+                 esc(fs0.kind) + (fs0.version ? ' v' + esc(fs0.version) : ''));
           }
         } else if (!scan.running) {
           line('no Stremio server found on this subnet', 'no');
@@ -439,12 +464,61 @@
       setTimeout(function () { finish(null, null); }, 2500);
     }
 
-    function scanLan() {
-      if (scan.running) { return; }
-      detectSubnet(function (prefix, ip) { startScan(prefix, ip); });
+    function esc(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    function startScan(prefix, ownIp) {
+    function ipValue(ip) {
+      var p = ip.split('.');
+      return ((+p[0]) * 16777216) + ((+p[1]) * 65536) + ((+p[2]) * 256) + (+p[3]);
+    }
+
+    function normUrl(u) { return String(u || '').replace(/\/?$/, '/'); }
+
+    /* Best-effort label from the server's install path, so the picker can say
+       "LG TV (webOS)" rather than a bare address. Never trusted for anything. */
+    function describeServer(json) {
+      var v = (json && json.values) || {};
+      var p = String(v.appPath || '');
+      var kind = /\/palm\//.test(p) ? 'LG TV (webOS)'
+               : /android|\/data\/user/i.test(p) ? 'Android device'
+               : /^[A-Za-z]:\\|AppData/.test(p) ? 'Windows PC'
+               : /\/Library\//.test(p) ? 'Mac'
+               : /^\/home\//.test(p) ? 'Linux computer'
+               : 'Stremio server';
+      return { kind: kind, version: String(v.serverVersion || '') };
+    }
+
+    /* Is a Stremio server answering at this URL? cb(ok, json) */
+    function checkServer(url, cb) {
+      var x, finished = false;
+      function fin(ok, json) { if (!finished) { finished = true; cb(ok, json); } }
+      if (!url) { fin(false, null); return; }
+      try {
+        x = new XMLHttpRequest();
+        x.open('GET', normUrl(url) + 'settings', true);
+        x.timeout = 4000;
+        x.onload = function () {
+          var j = null;
+          try { j = JSON.parse(x.responseText); } catch (e) {}
+          fin(x.status === 200 && !!(j && j.values), j);
+        };
+        x.onerror = function () { fin(false, null); };
+        x.ontimeout = function () { fin(false, null); };
+        x.send();
+      } catch (e) { fin(false, null); }
+    }
+
+    /* opts: { manual: bool, deadUrl: string } */
+    function scanLan(opts) {
+      if (scan.running) { return; }
+      opts = opts || {};
+      if (opts.manual) { prompt.opts = opts; promptSearching(); }
+      detectSubnet(function (prefix, ip) { startScan(prefix, ip, opts); });
+    }
+
+    function startScan(prefix, ownIp, opts) {
       /* Fall back to the configured server's subnet, then a common default. */
       var base = prefix;
       if (!base && SERVER_URL) {
@@ -452,41 +526,246 @@
         if (m) { base = m[1] + '.'; }
       }
       if (!base) { base = '192.168.1.'; }
-      scan.subnet = base + '0/24' + (ownIp ? '  (this TV: ' + ownIp + ')' : '  (guessed)');
-      var subnetLabel = scan.subnet;
-      scan = { running: true, done: 0, total: 254, found: [], subnet: subnetLabel };
-      show('LAN SCAN for Stremio server');
+      scan = { running: true, done: 0, total: 254, found: [], ownIp: ownIp || '',
+               subnet: base + '0/24' + (ownIp ? '  (this TV: ' + ownIp + ')' : '  (guessed)') };
 
-      var next = 1;
-      function launch() {
-        while (next <= 254) {
-          var ip = base + (next++);
-          (function (ip) {
-            var x = new XMLHttpRequest();
-            var url = 'http://' + ip + ':11470/settings';
-            try {
-              x.open('GET', url, true);
-              x.timeout = 4000;
-              x.onload = function () {
-                if (x.status === 200 && /server|values|cacheSize|appPath/i.test(x.responseText || '')) {
-                  scan.found.push(ip);
-                }
-                scan.done++;
-              };
-              x.onerror = function () { scan.done++; };
-              x.ontimeout = function () { scan.done++; };
-              x.send();
-            } catch (e) { scan.done++; }
-          })(ip);
-        }
+      /* A bounded pool rather than 254 requests at once: on a 2017 TV this
+         runs alongside the app's own startup traffic. */
+      var next = 1, active = 0, LIMIT = 48;
+
+      function probeHost(ip) {
+        active++;
+        checkServer('http://' + ip + ':11470/', function (ok, json) {
+          if (ok) {
+            var d = describeServer(json);
+            scan.found.push({ ip: ip, url: 'http://' + ip + ':11470/', kind: d.kind, version: d.version });
+          }
+          active--;
+          scan.done++;
+          pump();
+        });
       }
-      launch();
+
+      function pump() {
+        while (active < LIMIT && next <= 254) {
+          var ip = base + (next++);
+          if (ip === ownIp) { scan.done++; continue; }
+          probeHost(ip);
+        }
+        if (scan.running && scan.done >= scan.total) { finishScan(opts); }
+      }
 
       var iv = setInterval(function () {
         if (visible) { render('LAN SCAN for Stremio server'); }
-        if (scan.done >= scan.total) { scan.running = false; clearInterval(iv); }
-      }, 1000);
+        if (prompt.state === 'searching') { renderPrompt(); }
+        if (!scan.running) { clearInterval(iv); }
+      }, 500);
+
+      pump();
     }
+
+    function finishScan(opts) {
+      scan.running = false;
+      scan.found.sort(function (a, b) { return ipValue(a.ip) - ipValue(b.ip); });
+      if (visible) { render('LAN SCAN for Stremio server'); }
+
+      if (opts.manual) {
+        if (opts.cancelled) { return; }                  /* user pressed BACK mid-search */
+        if (scan.found.length) { promptChoose(scan.found, opts); } else { promptNone(); }
+        return;
+      }
+
+      /* Automatic: offer only servers the user hasn't already turned down. */
+      var dismissed = loadDismissed(), offer = [];
+      for (var i = 0; i < scan.found.length; i++) {
+        if (dismissed.indexOf(scan.found[i].url) === -1) { offer.push(scan.found[i]); }
+      }
+      if (offer.length) { promptChoose(offer, opts); }
+      note('auto-discovery: ' + scan.found.length + ' found, ' + offer.length + ' offered');
+    }
+
+    /* ---- "not now" is remembered, so auto-discovery doesn't nag ---------- */
+    var DISMISS_KEY = 'stremio-tizen3.dismissedServers';
+    function loadDismissed() {
+      try { var v = JSON.parse(localStorage.getItem(DISMISS_KEY) || '[]'); return v instanceof Array ? v : []; }
+      catch (e) { return []; }
+    }
+    function dismiss(list) {
+      var d = loadDismissed();
+      for (var i = 0; i < list.length; i++) { if (d.indexOf(list[i].url) === -1) { d.push(list[i].url); } }
+      try { localStorage.setItem(DISMISS_KEY, JSON.stringify(d)); } catch (e) {}
+    }
+
+    /* ---- the server picker ------------------------------------------------
+       States: searching -> choose -> applying -> done | failed, or none.
+       While open it owns the remote: see the capture-phase key handler. */
+    var prompt = { open: false, state: '', items: [], sel: 0, opts: {}, msg: '', url: '' };
+
+    function openPrompt() {
+      prompt.open = true;
+      document.getElementById('srvprompt').className = 'open';
+    }
+    function closePrompt() {
+      prompt.open = false;
+      prompt.state = '';
+      document.getElementById('srvprompt').className = '';
+    }
+
+    function promptSearching() {
+      prompt.state = 'searching';
+      openPrompt();
+      renderPrompt();
+    }
+
+    function promptNone() {
+      prompt.state = 'none';
+      openPrompt();
+      renderPrompt();
+    }
+
+    function promptChoose(list, opts) {
+      /* Read the live setting first so "in use" is right even if the user
+         pressed YELLOW before the launch-time check had run. */
+      refreshCurrent(function () {
+        prompt.items = list;
+        prompt.opts = opts || {};
+        prompt.sel = 0;
+        for (var i = 0; i < list.length; i++) {          /* start on one not already in use */
+          if (normUrl(list[i].url) !== normUrl(srv.current)) { prompt.sel = i; break; }
+        }
+        prompt.state = 'choose';
+        openPrompt();
+        renderPrompt();
+      });
+    }
+
+    function refreshCurrent(cb) {
+      if (!window.core || !window.core.getState) { cb(); return; }
+      window.core.getState('ctx').then(function (ctx) {
+        var u = ctx && ctx.profile && ctx.profile.settings && ctx.profile.settings.streamingServerUrl;
+        if (u) { srv.current = String(u); }
+        cb();
+      }, function () { cb(); });
+    }
+
+    function renderPrompt() {
+      var box = document.getElementById('srvprompt');
+      var h = '<div class="sp-card">';
+
+      if (prompt.state === 'searching') {
+        var pct = scan.total ? Math.floor(100 * scan.done / scan.total) : 0;
+        h += '<div class="sp-title">Looking for Stremio&hellip;</div>' +
+             '<div class="sp-sub">Searching your network for a device running Stremio.</div>' +
+             '<div class="sp-bar"><div class="sp-fill" style="width:' + pct + '%"></div></div>' +
+             '<div class="sp-hint">' + (scan.found.length ? scan.found.length + ' found so far &middot; ' : '') +
+             'BACK to cancel</div>';
+
+      } else if (prompt.state === 'none') {
+        h += '<div class="sp-title">No Stremio server found</div>' +
+             '<div class="sp-sub">Open Stremio on another device on this network &mdash; an LG TV, ' +
+             'a PC, a NAS &mdash; then press <b>YELLOW</b> to search again.</div>' +
+             '<div class="sp-hint">OK or BACK to close</div>';
+
+      } else if (prompt.state === 'choose') {
+        var many = prompt.items.length > 1;
+        h += '<div class="sp-title">Stremio server found</div><div class="sp-sub">';
+        if (prompt.opts.deadUrl) {
+          h += 'Your current server (' + esc(prompt.opts.deadUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')) +
+               ') isn\'t responding. ';
+        }
+        h += (many ? 'Choose one' : 'Use it') + ' to play torrents on this TV?</div>';
+
+        for (var i = 0; i < prompt.items.length; i++) {
+          var it = prompt.items[i];
+          var current = normUrl(it.url) === normUrl(srv.current);
+          h += '<div class="sp-row' + (i === prompt.sel ? ' sel' : '') + '">' +
+               '<div class="sp-main">' + esc(it.kind) +
+               (current ? '<span class="sp-tag">&#10003; in use</span>' : '') + '</div>' +
+               '<div class="sp-meta">' + esc(it.ip) + ':11470' +
+               (it.version ? ' &middot; Stremio server v' + esc(it.version) : '') + '</div></div>';
+        }
+        h += '<div class="sp-row' + (prompt.sel === prompt.items.length ? ' sel' : '') + '">' +
+             '<div class="sp-main">Not now</div></div>' +
+             '<div class="sp-hint">&#9650;&#9660; choose &middot; OK select &middot; BACK cancel</div>';
+
+      } else if (prompt.state === 'applying') {
+        h += '<div class="sp-title">Connecting&hellip;</div>' +
+             '<div class="sp-sub">' + esc(prompt.url) + '</div>';
+
+      } else if (prompt.state === 'done') {
+        h += '<div class="sp-title sp-ok">&#10003; Connected</div>' +
+             '<div class="sp-sub">Torrents will now stream through ' + esc(prompt.msg) +
+             '.<br>You can change this any time in Settings &rarr; Server.</div>' +
+             '<div class="sp-hint">OK to continue</div>';
+
+      } else if (prompt.state === 'failed') {
+        h += '<div class="sp-title sp-bad">Saved, but not confirmed</div>' +
+             '<div class="sp-sub">' + esc(prompt.msg) + '</div>' +
+             '<div class="sp-hint">OK to continue</div>';
+      }
+
+      box.innerHTML = h + '</div>';
+    }
+
+    function choose() {
+      if (prompt.sel >= prompt.items.length) {           /* "Not now" */
+        if (!prompt.opts.manual) { dismiss(prompt.items); }
+        closePrompt();
+        return;
+      }
+      var it = prompt.items[prompt.sel];
+      prompt.url = it.url;
+      prompt.state = 'applying';
+      renderPrompt();
+
+      setServerUrl(it.url, function (err) {
+        if (err) {
+          prompt.state = 'failed';
+          prompt.msg = 'Could not save the setting: ' + err;
+          renderPrompt();
+          return;
+        }
+        waitForServer(it.url, function (ok) {
+          if (ok) {
+            prompt.state = 'done';
+            prompt.msg = it.kind + (it.version ? ' (v' + it.version + ')' : '');
+            renderPrompt();
+            setTimeout(function () { if (prompt.state === 'done') { closePrompt(); } }, 4000);
+          } else {
+            prompt.state = 'failed';
+            prompt.msg = 'The address was saved, but Stremio did not report the server as online yet. ' +
+                         'Check Settings → Server; if it says Offline, select Reload.';
+            renderPrompt();
+          }
+        });
+      });
+    }
+
+    function isBack(k) { return k === 10009 || k === 8 || k === 27 || k === 461; }
+    function isOk(k) { return k === 13 || k === 29443 || k === 65376; }
+
+    /* While the picker is open it must own the remote, or the app underneath
+       would also move focus / navigate back. Capture phase on window runs
+       before every document listener, including the app's. */
+    window.addEventListener('keydown', function (ev) {
+      if (!prompt.open) { return; }
+      var k = ev.keyCode;
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (ev.stopImmediatePropagation) { ev.stopImmediatePropagation(); }
+
+      if (prompt.state === 'choose') {
+        var last = prompt.items.length;                   /* index of "Not now" */
+        if (k === 38) { prompt.sel = prompt.sel > 0 ? prompt.sel - 1 : last; renderPrompt(); }
+        else if (k === 40) { prompt.sel = prompt.sel < last ? prompt.sel + 1 : 0; renderPrompt(); }
+        else if (isOk(k)) { choose(); }
+        else if (isBack(k)) { prompt.sel = last; choose(); }
+      } else if (prompt.state === 'searching') {
+        if (isBack(k)) { prompt.opts.cancelled = true; closePrompt(); }   /* scan finishes silently */
+      } else if (prompt.state !== 'applying') {
+        if (isOk(k) || isBack(k)) { closePrompt(); }
+      }
+    }, true);
 
     /* ---- what APIs does this web runtime actually expose? ---- */
     function listApis(obj, prefix) {
@@ -521,26 +800,84 @@
         if (!force && !stock && !mistyped) { srv.note = 'left as-is (user set)'; return; }
         if (srv.current === SERVER_URL) { srv.note = 'already correct'; srv.applied = true; return; }
 
+        setServerUrl(SERVER_URL, function (err) {
+          srv.note = err ? 'failed: ' + err : 'set to ' + SERVER_URL;
+          if (!err) { srv.applied = true; }
+        });
+      }, function (e) { srv.note = 'getState failed: ' + (e && e.message ? e.message : String(e)); });
+    }
+
+    /* Points the core at a streaming server - the same actions stremio-web
+       dispatches, followed by the reconnect the Settings "Reload" row does. */
+    function setServerUrl(url, cb) {
+      if (!window.core || !window.core.getState) { cb('Stremio is still starting'); return; }
+      window.core.getState('ctx').then(function (ctx) {
+        var settings = ctx && ctx.profile && ctx.profile.settings;
+        if (!settings) { cb('no settings in ctx'); return; }
+
+        /* Only add to the saved list if it isn't there, so the core has no
+           reason to raise an error toast. */
+        var saved = (ctx && ctx.streamingServerUrls) || [], known = false;
+        for (var i = 0; i < saved.length; i++) {
+          if (normUrl(saved[i] && (saved[i].url || saved[i])) === normUrl(url)) { known = true; }
+        }
+
         var merged = {};
         for (var k in settings) { merged[k] = settings[k]; }
-        merged.streamingServerUrl = SERVER_URL;
+        merged.streamingServerUrl = url;
         try {
-          window.core.dispatch({ action: 'Ctx', args: { action: 'AddServerUrl', args: SERVER_URL } });
+          if (!known) { window.core.dispatch({ action: 'Ctx', args: { action: 'AddServerUrl', args: url } }); }
           window.core.dispatch({ action: 'Ctx', args: { action: 'UpdateSettings', args: merged } });
-          srv.applied = true;
-          srv.current = SERVER_URL;
-          srv.note = 'set to ' + SERVER_URL;
-          note('streamingServerUrl -> ' + SERVER_URL);
-        } catch (e) { srv.note = 'dispatch failed: ' + e.message; }
-      }, function (e) { srv.note = 'getState failed: ' + (e && e.message ? e.message : String(e)); });
+          window.core.dispatch({ action: 'StreamingServer', args: { action: 'Reload' } }, 'streaming_server');
+        } catch (e) { cb(e.message); return; }
+
+        srv.current = url;
+        note('streamingServerUrl -> ' + url);
+        cb(null);
+      }, function (e) { cb(e && e.message ? e.message : String(e)); });
+    }
+
+    /* Polls the core until it reports this server as Ready. cb(ok) */
+    function waitForServer(url, cb) {
+      var tries = 0;
+      function again() { if (++tries >= 20) { cb(false); } else { setTimeout(poll, 500); } }
+      function poll() {
+        window.core.getState('streaming_server').then(function (st) {
+          var sel = st && st.selected && st.selected.transportUrl;
+          var ready = st && st.settings && st.settings.type === 'Ready';
+          /* Ignore a stale Ready that still belongs to the previous server. */
+          if (ready && (!sel || normUrl(sel) === normUrl(url))) { cb(true); } else { again(); }
+        }, again);
+      }
+      poll();
+    }
+
+    /* On launch: if the configured server isn't answering, look for one.
+       This is what rescues you when a router hands the server a new IP. */
+    var autoChecked = false;
+    function autoDiscover() {
+      if (autoChecked) { return; }
+      autoChecked = true;
+      window.core.getState('ctx').then(function (ctx) {
+        var url = ctx && ctx.profile && ctx.profile.settings && ctx.profile.settings.streamingServerUrl;
+        srv.current = String(url || '');
+        checkServer(url, function (ok) {
+          if (ok) { note('auto-discovery: configured server is up'); return; }
+          var stock = /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/.test(String(url || ''));
+          scanLan({ deadUrl: stock ? '' : String(url || '') });
+        });
+      }, function () {});
     }
 
     /* Core needs a moment to initialise before window.core exists. */
     var srvTries = 0;
     var srvIv = setInterval(function () {
       srvTries++;
-      if (window.core && window.core.getState) { applyServerUrl(false); clearInterval(srvIv); }
-      else if (srvTries > 40) { srv.note = 'window.core never appeared'; clearInterval(srvIv); }
+      if (window.core && window.core.getState) {
+        clearInterval(srvIv);
+        applyServerUrl(false);
+        setTimeout(autoDiscover, 3000);    /* after any baked-in URL has landed */
+      } else if (srvTries > 40) { srv.note = 'window.core never appeared'; clearInterval(srvIv); }
     }, 1000);
 
     /* Diagnostic trigger.
@@ -559,7 +896,7 @@
     document.addEventListener('keydown', function (ev) {
       if (ev.keyCode === 406) { if (visible) { hide(); } else { show('MANUAL (blue button)'); } }
       if (ev.keyCode === 404) { runSelfTest(); }   /* GREEN  = AVPlay self-test */
-      if (ev.keyCode === 405) { scanLan(); }       /* YELLOW = scan LAN for server */
+      if (ev.keyCode === 405) { scanLan({ manual: true }); }   /* YELLOW = find a server */
       if (ev.keyCode === 403) { applyServerUrl(true); show('SERVER URL FORCED'); }  /* RED */
     });
   })();

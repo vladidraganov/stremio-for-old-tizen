@@ -221,6 +221,60 @@ Official store builds on newer Samsung TVs work because Samsung signs them with
 privileges sideloading cannot obtain — which is also why Stremio publishes a
 `dl.strem.io/server/v4.20.17/tizen/server.js` at all.
 
+## Finding a server automatically
+
+Since the server has to live elsewhere, the app finds it rather than making
+anyone type an address on a TV keyboard (where `:` hides on the symbols page,
+and a `/` in its place silently points at port 80).
+
+**Discovery.** The TV's own address comes from `tizen.systeminfo`
+(`ETHERNET_NETWORK` / `WIFI_NETWORK`), giving the `/24` to scan. Each host gets
+`GET http://<ip>:11470/settings` through a pool of 48 concurrent requests, so a
+2017 TV's startup traffic isn't drowned out. A host counts as a Stremio server
+only if it returns JSON with a `values` object — real servers answer like this:
+
+```json
+{ "options": [...], "baseUrl": "http://192.168.1.50:11470",
+  "values": { "serverVersion": "4.20.11",
+              "appPath": "/media/cryptofs/apps/usr/palm/services/io.strem.tv.server/.stremio-server", ... } }
+```
+
+`appPath` gives a friendly label (`/palm/` → "LG TV (webOS)", `AppData` →
+"Windows PC", ...). It is display-only; everything shown is HTML-escaped, since
+any device on the LAN can answer that port.
+
+**When it runs.** On launch, once `window.core` exists, the app reads the
+configured `streamingServerUrl` and probes it. Only if it fails to answer does a
+background scan run, and only servers the user hasn't declined are offered.
+"Not now" is stored in `localStorage` so an unwanted server isn't offered every
+launch. **YELLOW** runs the same scan on demand and always lists everything.
+
+This is what rescues the common failure: the router hands the server a new DHCP
+lease, the saved address goes dead, and on the next launch the app offers the
+new one.
+
+**Applying a choice** uses the same dispatches stremio-web uses, then the
+reconnect the Settings "Reload" row performs:
+
+```js
+core.dispatch({ action: 'Ctx', args: { action: 'AddServerUrl', args: url } });     // only if not saved
+core.dispatch({ action: 'Ctx', args: { action: 'UpdateSettings', args: { ...settings, streamingServerUrl: url } } });
+core.dispatch({ action: 'StreamingServer', args: { action: 'Reload' } }, 'streaming_server');
+```
+
+This fork's frontend never dispatches `AddServerUrl`, so its presence in the
+core was confirmed by decoding the worker's base64 data segments rather than
+assumed. The picker then polls `getState('streaming_server')` and reports
+success only when the core says `Ready` *for the new URL* — a `Ready` left over
+from the previous server doesn't count.
+
+While open, the picker owns the remote: a capture-phase `keydown` listener on
+`window` runs before every document listener, including the app's, so arrows and
+BACK don't also move focus or navigate underneath it.
+
+`test/server-prompt.test.js` drives all of this in jsdom against a fake LAN and
+a fake core, with real key events.
+
 ## Talking to the TV without Tizen Studio
 
 `tools/sdb.js` is a minimal SDB client. SDB reuses the ADB wire format — a
