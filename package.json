@@ -17,7 +17,7 @@
     "es5"
   ],
   "engines": {
-    "node": ">=16"
+    "node": ">=22"
   },
   "scripts": {
     "build": "node --max-old-space-size=8192 build.js",

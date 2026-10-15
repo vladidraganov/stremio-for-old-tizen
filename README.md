@@ -30,7 +30,7 @@ version and engine capabilities.
 
 ## Requirements
 
-- **Node.js 16+** on a PC (Windows/macOS/Linux)
+- **Node.js 22+** on a PC (Windows/macOS/Linux) — the current LTS is fine
 - The upstream package: `Stremio-Tizen4.wgt` from
   [Apps2Samsung/tizen-community-packages](https://github.com/Apps2Samsung/tizen-community-packages/releases)
 - A way to install it — [Apps2Samsung](https://github.com/Apps2Samsung) works
