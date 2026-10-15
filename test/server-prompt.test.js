@@ -232,6 +232,23 @@ const scenarios = {
     again.dom.window.close();
   },
 
+  async 'YELLOW during the launch-time background scan still responds'() {
+    // Reported on a real TV: an offline server was configured, so a silent
+    // background scan was running - and YELLOW did nothing at all.
+    const tv = bootTv({
+      latency: 1000,                                     // slow LAN: the scan runs for seconds
+      current: 'http://192.168.7.15:11470/',
+      servers: { 'http://192.168.7.100:11470/': { version: '4.20.11', appPath: WEBOS_PATH } },
+    });
+    await sleep(6000);                                   // auto-check failed, background scan under way
+    assert.ok(!tv.isOpen(), 'background scan is silent');
+    tv.press(KEY.YELLOW);
+    assert.ok(tv.isOpen() && /Looking for Stremio/.test(tv.text()),
+      'YELLOW must show the search immediately, got: ' + (tv.isOpen() ? tv.text() : '(closed)'));
+    await waitFor(() => /Stremio server found/.test(tv.text()), 12000, 'results from the joined scan');
+    tv.dom.window.close();
+  },
+
   async 'YELLOW with nothing on the network says so'() {
     const tv = bootTv({ servers: {} });
     await sleep(500);

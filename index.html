@@ -491,14 +491,14 @@
     }
 
     /* Is a Stremio server answering at this URL? cb(ok, json) */
-    function checkServer(url, cb) {
+    function checkServer(url, cb, timeoutMs) {
       var x, finished = false;
       function fin(ok, json) { if (!finished) { finished = true; cb(ok, json); } }
       if (!url) { fin(false, null); return; }
       try {
         x = new XMLHttpRequest();
         x.open('GET', normUrl(url) + 'settings', true);
-        x.timeout = 4000;
+        x.timeout = timeoutMs || 4000;
         x.onload = function () {
           var j = null;
           try { j = JSON.parse(x.responseText); } catch (e) {}
@@ -511,10 +511,27 @@
     }
 
     /* opts: { manual: bool, deadUrl: string } */
+    var scanOpts = null;                                 /* options of the scan in progress */
+
     function scanLan(opts) {
-      if (scan.running) { return; }
       opts = opts || {};
+      if (scan.running) {
+        /* YELLOW must never be ignored. If the silent launch-time scan is
+           already under way, show it and turn it into a manual one, so its
+           results (or "nothing found") are presented when it finishes. */
+        if (opts.manual && scanOpts) {
+          scanOpts.manual = true;
+          scanOpts.cancelled = false;
+          prompt.opts = scanOpts;
+          promptSearching();
+          note('scan: YELLOW joined the scan already running');
+        }
+        return;
+      }
+      scan.running = true;                               /* claim it before the async subnet lookup */
+      scanOpts = opts;
       if (opts.manual) { prompt.opts = opts; promptSearching(); }
+      note('scan: ' + (opts.manual ? 'manual' : 'automatic') + ' search started');
       detectSubnet(function (prefix, ip) { startScan(prefix, ip, opts); });
     }
 
@@ -531,7 +548,8 @@
 
       /* A bounded pool rather than 254 requests at once: on a 2017 TV this
          runs alongside the app's own startup traffic. */
-      var next = 1, active = 0, LIMIT = 48;
+      var next = 1, active = 0, LIMIT = 64;
+      note('scan: probing ' + scan.subnet);
 
       function probeHost(ip) {
         active++;
@@ -543,7 +561,7 @@
           active--;
           scan.done++;
           pump();
-        });
+        }, 2500);                                         /* LAN servers answer in ms */
       }
 
       function pump() {
@@ -566,7 +584,11 @@
 
     function finishScan(opts) {
       scan.running = false;
+      scanOpts = null;
       scan.found.sort(function (a, b) { return ipValue(a.ip) - ipValue(b.ip); });
+      var names = [];
+      for (var f = 0; f < scan.found.length; f++) { names.push(scan.found[f].url); }
+      note('scan: finished, ' + scan.found.length + ' found' + (names.length ? ': ' + names.join(', ') : ''));
       if (visible) { render('LAN SCAN for Stremio server'); }
 
       if (opts.manual) {
@@ -861,12 +883,14 @@
       window.core.getState('ctx').then(function (ctx) {
         var url = ctx && ctx.profile && ctx.profile.settings && ctx.profile.settings.streamingServerUrl;
         srv.current = String(url || '');
+        note('auto-discovery: configured server is ' + (url || '(none)') + ', checking');
         checkServer(url, function (ok) {
-          if (ok) { note('auto-discovery: configured server is up'); return; }
+          if (ok) { note('auto-discovery: configured server is up - nothing to do'); return; }
+          note('auto-discovery: configured server is NOT answering - searching');
           var stock = /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/.test(String(url || ''));
           scanLan({ deadUrl: stock ? '' : String(url || '') });
         });
-      }, function () {});
+      }, function (e) { note('auto-discovery: could not read settings: ' + (e && e.message ? e.message : e)); });
     }
 
     /* Core needs a moment to initialise before window.core exists. */
@@ -875,9 +899,14 @@
       srvTries++;
       if (window.core && window.core.getState) {
         clearInterval(srvIv);
+        note('core ready after ' + srvTries + 's - server check in 3s');
         applyServerUrl(false);
         setTimeout(autoDiscover, 3000);    /* after any baked-in URL has landed */
-      } else if (srvTries > 40) { srv.note = 'window.core never appeared'; clearInterval(srvIv); }
+      } else if (srvTries > 40) {
+        srv.note = 'window.core never appeared';
+        note('core never appeared - automatic server discovery disabled');
+        clearInterval(srvIv);
+      }
     }, 1000);
 
     /* Diagnostic trigger.
